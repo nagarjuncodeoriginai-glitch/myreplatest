@@ -391,8 +391,8 @@ export default function EmployeesPage() {
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) {
-                            if (file.size > 500 * 1024) {
-                              setFormError("Photo must be less than 500KB");
+                            if (file.size > 10 * 1024 * 1024) {
+                              setFormError("Photo must be less than 10MB");
                               return;
                             }
                             const reader = new FileReader();
@@ -414,7 +414,7 @@ export default function EmployeesPage() {
                         Remove
                       </button>
                     )}
-                    <p className="text-xs text-slate-500 mt-1">JPG, PNG. Max 500KB.</p>
+                    <p className="text-xs text-slate-500 mt-1">JPG, PNG. Max 10MB.</p>
                   </div>
                 </div>
 

@@ -3,6 +3,15 @@ import { query, insert, queryOne } from "@/database/connection";
 import { requireAuth, hashPassword } from "@/lib/auth";
 import { employeeSchema } from "@/lib/validations";
 
+// Allow up to 12MB body for profile photo uploads
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "12mb",
+    },
+  },
+};
+
 // GET all employees (HR only)
 export async function GET(request: NextRequest) {
   try {
