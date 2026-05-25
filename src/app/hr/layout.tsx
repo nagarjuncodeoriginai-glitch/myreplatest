@@ -20,6 +20,7 @@ import {
   TrendingUp,
   Home,
   Calendar,
+  Megaphone,
 } from "lucide-react";
 import { LiveClock } from "@/components/ui/live-clock";
 import NotificationsPanel from "@/components/notifications-panel";
@@ -28,6 +29,8 @@ const navItems = [
   { href: "/hr", label: "Dashboard", icon: LayoutDashboard, color: "from-blue-500 to-indigo-600" },
   { href: "/hr/employees", label: "Employees", icon: Users, color: "from-violet-500 to-purple-600" },
   { href: "/hr/leaves", label: "Leaves", icon: CalendarCheck, color: "from-amber-500 to-orange-600" },
+  { href: "/hr/attendance", label: "Attendance", icon: CalendarDays, color: "from-green-500 to-emerald-600" },
+  { href: "/hr/announcements", label: "Announcements", icon: Megaphone, color: "from-pink-500 to-rose-600" },
   { href: "/hr/team-calendar", label: "Team Calendar", icon: Calendar, color: "from-teal-500 to-cyan-600" },
   { href: "/hr/reports", label: "Reports", icon: BarChart3, color: "from-cyan-500 to-blue-600" },
   { href: "/hr/holidays", label: "Holidays", icon: CalendarDays, color: "from-emerald-500 to-teal-600" },

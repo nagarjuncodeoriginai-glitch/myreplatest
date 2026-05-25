@@ -119,6 +119,12 @@ export async function POST(request: NextRequest) {
 
     const hashedPassword = await hashPassword(data.password);
 
+    // Truncate profile_photo if too large (max 1MB base64)
+    let profilePhoto = (body.profile_photo as string) || "";
+    if (profilePhoto.length > 1000000) {
+      profilePhoto = ""; // Skip if too large
+    }
+
     const newId = await insert(
       `INSERT INTO employees (emp_id, full_name, email, phone, gender, date_of_birth, address, 
         department, designation, manager_name, doj, employment_type, probation_period, 
@@ -136,7 +142,7 @@ export async function POST(request: NextRequest) {
         data.department,
         data.designation,
         data.manager_name || "",
-        data.doj,
+        toDateOrNull(data.doj),
         data.employment_type,
         data.probation_period || "",
         toDateOrNull(data.confirmation_date),
@@ -149,7 +155,7 @@ export async function POST(request: NextRequest) {
         data.aadhaar_number || "",
         data.username,
         hashedPassword,
-        (body.profile_photo as string) || "",
+        profilePhoto,
         data.status || "active",
       ]
     );
