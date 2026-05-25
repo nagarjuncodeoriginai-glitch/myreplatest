@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData } from "@/database/connection";
+import { query } from "@/database/connection";
 import { verifyPassword, generateToken } from "@/lib/auth";
 import { loginSchema } from "@/lib/validations";
 import { JWTPayload } from "@/types";
@@ -17,12 +17,15 @@ export async function POST(request: NextRequest) {
     }
 
     const { username, password } = validation.data;
-    const db = getData();
 
     // Check HR Admin first
-    const admin = db.hr_admin.find((a) => a.username === username);
+    const admins = await query<{ id: number; username: string; password: string }[]>(
+      "SELECT id, username, password FROM hr_admin WHERE username = ?",
+      [username]
+    );
 
-    if (admin) {
+    if (admins.length > 0) {
+      const admin = admins[0];
       const isValid = await verifyPassword(password, admin.password);
 
       if (isValid) {
@@ -54,11 +57,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Check Employee
-    const employee = db.employees.find(
-      (e) => e.username === username && e.status === "active"
+    const employees = await query<{ id: number; username: string; password: string; emp_id: string; full_name: string; status: string }[]>(
+      "SELECT id, username, password, emp_id, full_name, status FROM employees WHERE username = ? AND status = 'active'",
+      [username]
     );
 
-    if (employee) {
+    if (employees.length > 0) {
+      const employee = employees[0];
       const isValid = await verifyPassword(password, employee.password);
 
       if (isValid) {

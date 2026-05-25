@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { query, insert } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
-import { getData, saveData, getNextId } from "@/database/connection";
 
 // GET all announcements (accessible by both HR and employees)
 export async function GET(request: NextRequest) {
@@ -10,23 +10,30 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get("category") || "";
     const priority = searchParams.get("priority") || "";
 
-    const db = getData();
-    let filtered = (db.announcements || []).filter(a => a.isActive);
+    let whereClauses: string[] = ["is_active = 1"];
+    let params: unknown[] = [];
 
     if (category) {
-      filtered = filtered.filter(a => a.category === category);
+      whereClauses.push("category = ?");
+      params.push(category);
     }
     if (priority) {
-      filtered = filtered.filter(a => a.priority === priority);
+      whereClauses.push("priority = ?");
+      params.push(priority);
     }
 
-    // Sort by date descending
-    filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const whereStr = `WHERE ${whereClauses.join(" AND ")}`;
+
+    const announcements = await query(
+      `SELECT id, title, content, category, date, priority, author, is_active as isActive 
+       FROM announcements ${whereStr} ORDER BY date DESC`,
+      params
+    );
 
     return NextResponse.json({
       success: true,
-      data: filtered,
-      total: filtered.length,
+      data: announcements,
+      total: (announcements as unknown[]).length,
     });
   } catch (error: unknown) {
     const err = error as Error;
@@ -60,22 +67,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getData();
-    if (!db.announcements) db.announcements = [];
+    const today = new Date().toISOString().split("T")[0];
+
+    const newId = await insert(
+      "INSERT INTO announcements (title, content, category, date, priority, author, is_active) VALUES (?, ?, ?, ?, ?, 'HR Admin', 1)",
+      [title, content, category, today, priority || "medium"]
+    );
 
     const newAnnouncement = {
-      id: getNextId(db.announcements),
+      id: newId,
       title,
       content,
       category,
-      date: new Date().toISOString().split("T")[0],
+      date: today,
       priority: priority || "medium",
       author: "HR Admin",
       isActive: true,
     };
-
-    db.announcements.push(newAnnouncement);
-    saveData(db);
 
     return NextResponse.json(
       { success: true, message: "Announcement created successfully", data: newAnnouncement },

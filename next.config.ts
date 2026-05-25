@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "2mb",
     },
   },
+  serverExternalPackages: ["mysql2"],
 };
 
 export default nextConfig;
