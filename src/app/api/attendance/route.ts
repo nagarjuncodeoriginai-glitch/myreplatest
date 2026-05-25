@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, queryOne, insert, execute } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 // GET attendance records
@@ -10,34 +10,35 @@ export async function GET(request: NextRequest) {
     const date = searchParams.get("date") || "";
     const employeeId = searchParams.get("employee_id") || "";
 
-    const db = getData();
-    if (!db.attendance) db.attendance = [];
-
-    let records = [...db.attendance];
+    let whereClauses: string[] = [];
+    let params: unknown[] = [];
 
     // Employees can only see their own
     if (user.role === "employee") {
-      records = records.filter(r => r.employee_id === user.id);
+      whereClauses.push("employee_id = ?");
+      params.push(user.id);
     }
 
     if (date) {
-      records = records.filter(r => r.date === date);
+      whereClauses.push("date = ?");
+      params.push(date);
     }
     if (employeeId) {
-      records = records.filter(r => r.employee_id === parseInt(employeeId));
+      whereClauses.push("employee_id = ?");
+      params.push(parseInt(employeeId));
     }
 
-    // Sort by date desc, then by check_in desc
-    records.sort((a, b) => {
-      const dateCompare = new Date(b.date).getTime() - new Date(a.date).getTime();
-      if (dateCompare !== 0) return dateCompare;
-      return (b.check_in || "").localeCompare(a.check_in || "");
-    });
+    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    const records = await query(
+      `SELECT * FROM attendance ${whereStr} ORDER BY date DESC, check_in DESC`,
+      params
+    );
 
     return NextResponse.json({
       success: true,
       data: records,
-      total: records.length,
+      total: (records as unknown[]).length,
     });
   } catch (error: unknown) {
     const err = error as Error;
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Helper: parse time string like "03:15 pm" or "15:15" to hours (0-23) and minutes
+// Helper: parse time string like "03:15 pm" or "15:15" to minutes
 function parseTimeToMinutes(timeStr: string): number {
   const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?/);
   if (!match) return -1;
@@ -78,26 +79,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getData();
-    if (!db.attendance) db.attendance = [];
-
     const today = new Date().toISOString().split("T")[0];
     const now = new Date();
     const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
     // Find employee info
-    const employee = db.employees.find(e => e.id === user.id);
+    const employee = await queryOne<{ id: number; emp_id: string; full_name: string }>(
+      "SELECT id, emp_id, full_name FROM employees WHERE id = ?",
+      [user.id]
+    );
+
     if (!employee) {
       return NextResponse.json({ success: false, message: "Employee not found" }, { status: 404 });
     }
 
     // Check if there's already a record for today
-    const existingIndex = db.attendance.findIndex(
-      r => r.employee_id === user.id && r.date === today
+    const existing = await queryOne<{ id: number; check_in: string | null; check_out: string | null }>(
+      "SELECT id, check_in, check_out FROM attendance WHERE employee_id = ? AND date = ?",
+      [user.id, today]
     );
 
     if (action === "check_in") {
-      if (existingIndex >= 0 && db.attendance[existingIndex].check_in) {
+      if (existing && existing.check_in) {
         return NextResponse.json(
           { success: false, message: "Already checked in today" },
           { status: 400 }
@@ -106,45 +109,36 @@ export async function POST(request: NextRequest) {
 
       const isLate = now.getHours() > 10 || (now.getHours() === 10 && now.getMinutes() > 30);
       const locationStr = location || (latitude && longitude ? `Lat: ${latitude}, Lng: ${longitude}` : "Unknown");
+      const status = isLate ? "late" : "present";
 
-      if (existingIndex >= 0) {
-        db.attendance[existingIndex].check_in = timeStr;
-        db.attendance[existingIndex].check_in_location = locationStr;
-        db.attendance[existingIndex].status = isLate ? "late" : "present";
+      if (existing) {
+        await execute(
+          "UPDATE attendance SET check_in = ?, check_in_location = ?, status = ? WHERE id = ?",
+          [timeStr, locationStr, status, existing.id]
+        );
       } else {
-        const newRecord = {
-          id: getNextId(db.attendance),
-          employee_id: user.id,
-          emp_id: employee.emp_id,
-          full_name: employee.full_name,
-          date: today,
-          check_in: timeStr,
-          check_out: null,
-          check_in_location: locationStr,
-          check_out_location: null,
-          status: (isLate ? "late" : "present") as "present" | "late" | "absent",
-          hours: 0,
-          is_auto: false,
-        };
-        db.attendance.push(newRecord);
+        await insert(
+          `INSERT INTO attendance (employee_id, emp_id, full_name, date, check_in, check_in_location, status, hours, is_auto) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+          [user.id, employee.emp_id, employee.full_name, today, timeStr, locationStr, status]
+        );
       }
 
-      saveData(db);
       return NextResponse.json({
         success: true,
         message: `Checked in at ${timeStr}`,
-        data: { time: timeStr, location: locationStr, status: isLate ? "late" : "present" },
+        data: { time: timeStr, location: locationStr, status },
       });
     }
 
     if (action === "check_out") {
-      if (existingIndex < 0 || !db.attendance[existingIndex].check_in) {
+      if (!existing || !existing.check_in) {
         return NextResponse.json(
           { success: false, message: "Not checked in today" },
           { status: 400 }
         );
       }
-      if (db.attendance[existingIndex].check_out) {
+      if (existing.check_out) {
         return NextResponse.json(
           { success: false, message: "Already checked out today" },
           { status: 400 }
@@ -153,19 +147,19 @@ export async function POST(request: NextRequest) {
 
       const locationStr = location || (latitude && longitude ? `Lat: ${latitude}, Lng: ${longitude}` : "Unknown");
 
-      // Calculate hours worked using check_in and current time
-      const checkInMinutes = parseTimeToMinutes(db.attendance[existingIndex].check_in || "");
+      // Calculate hours worked
+      const checkInMinutes = parseTimeToMinutes(existing.check_in);
       const checkOutMinutes = now.getHours() * 60 + now.getMinutes();
       let hoursWorked = 0;
       if (checkInMinutes >= 0 && checkOutMinutes > checkInMinutes) {
         hoursWorked = (checkOutMinutes - checkInMinutes) / 60;
       }
 
-      db.attendance[existingIndex].check_out = timeStr;
-      db.attendance[existingIndex].check_out_location = locationStr;
-      db.attendance[existingIndex].hours = parseFloat(hoursWorked.toFixed(1));
+      await execute(
+        "UPDATE attendance SET check_out = ?, check_out_location = ?, hours = ? WHERE id = ?",
+        [timeStr, locationStr, parseFloat(hoursWorked.toFixed(1)), existing.id]
+      );
 
-      saveData(db);
       return NextResponse.json({
         success: true,
         message: `Checked out at ${timeStr}. Worked ${hoursWorked.toFixed(1)} hours.`,
@@ -201,19 +195,14 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const db = getData();
-    if (!db.attendance) db.attendance = [];
+    const affected = await execute("DELETE FROM attendance WHERE id = ?", [parseInt(id)]);
 
-    const recordIndex = db.attendance.findIndex(r => r.id === parseInt(id));
-    if (recordIndex === -1) {
+    if (affected === 0) {
       return NextResponse.json(
         { success: false, message: "Attendance record not found" },
         { status: 404 }
       );
     }
-
-    db.attendance.splice(recordIndex, 1);
-    saveData(db);
 
     return NextResponse.json({
       success: true,

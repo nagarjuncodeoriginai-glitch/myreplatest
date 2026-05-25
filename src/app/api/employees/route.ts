@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, insert, queryOne } from "@/database/connection";
 import { requireAuth, hashPassword } from "@/lib/auth";
 import { employeeSchema } from "@/lib/validations";
 
@@ -14,42 +14,52 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status") || "";
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
+    const offset = (page - 1) * limit;
 
-    const db = getData();
-    let filtered = [...db.employees];
+    let whereClauses: string[] = [];
+    let params: unknown[] = [];
 
     if (search) {
-      const s = search.toLowerCase();
-      filtered = filtered.filter(
-        (e) =>
-          e.full_name.toLowerCase().includes(s) ||
-          e.emp_id.toLowerCase().includes(s) ||
-          e.email.toLowerCase().includes(s) ||
-          e.department.toLowerCase().includes(s)
-      );
+      whereClauses.push("(full_name LIKE ? OR emp_id LIKE ? OR email LIKE ? OR department LIKE ?)");
+      const s = `%${search}%`;
+      params.push(s, s, s, s);
     }
 
     if (department) {
-      filtered = filtered.filter((e) => e.department === department);
+      whereClauses.push("department = ?");
+      params.push(department);
     }
 
     if (status) {
-      filtered = filtered.filter((e) => e.status === status);
+      whereClauses.push("status = ?");
+      params.push(status);
     }
 
-    // Sort by created_at descending
-    filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-    const total = filtered.length;
-    const offset = (page - 1) * limit;
-    const paged = filtered.slice(offset, offset + limit);
+    // Get total count
+    const countResult = await query<{ total: number }[]>(
+      `SELECT COUNT(*) as total FROM employees ${whereStr}`,
+      params
+    );
+    const total = countResult[0].total;
 
-    // Remove password from response
-    const safeData = paged.map(({ password, ...rest }) => rest);
+    // Get paginated results (exclude password)
+    const employees = await query(
+      `SELECT id, emp_id, full_name, email, phone, gender, date_of_birth, address, 
+              department, designation, manager_name, doj, employment_type, probation_period, 
+              confirmation_date, work_location, shift_timing, salary_package, bank_account_number, 
+              ifsc_code, pan_number, aadhaar_number, username, profile_photo, status, 
+              created_at, updated_at 
+       FROM employees ${whereStr} 
+       ORDER BY created_at DESC 
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
 
     return NextResponse.json({
       success: true,
-      data: safeData,
+      data: employees,
       total,
       page,
       limit,
@@ -84,70 +94,69 @@ export async function POST(request: NextRequest) {
     }
 
     const data = validation.data;
-    const db = getData();
 
     // Check for duplicates
-    if (db.employees.find((e) => e.emp_id === data.emp_id)) {
+    const existingEmpId = await queryOne("SELECT id FROM employees WHERE emp_id = ?", [data.emp_id]);
+    if (existingEmpId) {
       return NextResponse.json({ success: false, message: "Employee ID already exists" }, { status: 409 });
     }
-    if (db.employees.find((e) => e.email === data.email)) {
+
+    const existingEmail = await queryOne("SELECT id FROM employees WHERE email = ?", [data.email]);
+    if (existingEmail) {
       return NextResponse.json({ success: false, message: "Email already exists" }, { status: 409 });
     }
-    if (db.employees.find((e) => e.username === data.username)) {
+
+    const existingUsername = await queryOne("SELECT id FROM employees WHERE username = ?", [data.username]);
+    if (existingUsername) {
       return NextResponse.json({ success: false, message: "Username already exists" }, { status: 409 });
     }
 
     const hashedPassword = await hashPassword(data.password);
-    const now = new Date().toISOString();
-    const newId = getNextId(db.employees);
 
-    const newEmployee = {
-      id: newId,
-      emp_id: data.emp_id,
-      full_name: data.full_name,
-      email: data.email,
-      phone: data.phone,
-      gender: data.gender,
-      date_of_birth: data.date_of_birth || "",
-      address: data.address || "",
-      department: data.department,
-      designation: data.designation,
-      manager_name: data.manager_name || "",
-      doj: data.doj,
-      employment_type: data.employment_type,
-      probation_period: data.probation_period || "",
-      confirmation_date: data.confirmation_date || "",
-      work_location: data.work_location || "",
-      shift_timing: data.shift_timing || "",
-      salary_package: data.salary_package || "",
-      bank_account_number: data.bank_account_number || "",
-      ifsc_code: data.ifsc_code || "",
-      pan_number: data.pan_number || "",
-      aadhaar_number: data.aadhaar_number || "",
-      username: data.username,
-      password: hashedPassword,
-      profile_photo: (body.profile_photo as string) || "",
-      status: data.status || "active" as const,
-      created_at: now,
-      updated_at: now,
-    };
-
-    db.employees.push(newEmployee);
+    const newId = await insert(
+      `INSERT INTO employees (emp_id, full_name, email, phone, gender, date_of_birth, address, 
+        department, designation, manager_name, doj, employment_type, probation_period, 
+        confirmation_date, work_location, shift_timing, salary_package, bank_account_number, 
+        ifsc_code, pan_number, aadhaar_number, username, password, profile_photo, status) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        data.emp_id,
+        data.full_name,
+        data.email,
+        data.phone,
+        data.gender,
+        data.date_of_birth || null,
+        data.address || "",
+        data.department,
+        data.designation,
+        data.manager_name || "",
+        data.doj,
+        data.employment_type,
+        data.probation_period || "",
+        data.confirmation_date || null,
+        data.work_location || "",
+        data.shift_timing || "",
+        data.salary_package || "",
+        data.bank_account_number || "",
+        data.ifsc_code || "",
+        data.pan_number || "",
+        data.aadhaar_number || "",
+        data.username,
+        hashedPassword,
+        (body.profile_photo as string) || "",
+        data.status || "active",
+      ]
+    );
 
     // Create initial leave balance for current month
     const currentMonth = new Date().getMonth() + 1;
     const currentYear = new Date().getFullYear();
-    db.leave_balance.push({
-      id: getNextId(db.leave_balance),
-      employee_id: newId,
-      month: currentMonth,
-      year: currentYear,
-      total_cl: 2,
-      used_cl: 0,
-      remaining_cl: 2,
-    });
 
-    saveData(db);
+    await insert(
+      `INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) 
+       VALUES (?, ?, ?, 2, 0, 2)`,
+      [newId, currentMonth, currentYear]
+    );
 
     return NextResponse.json(
       { success: true, message: "Employee created successfully", id: newId },

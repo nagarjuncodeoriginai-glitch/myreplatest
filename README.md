@@ -29,7 +29,7 @@ A modern enterprise-level HR and Employee Management Web Application built with 
 | Styling | Tailwind CSS, Framer Motion |
 | UI Components | Custom ShadCN-inspired components |
 | Authentication | JWT (jose), bcryptjs |
-| Database | MySQL with mysql2 |
+| Database | MariaDB/MySQL with mysql2 |
 | Validation | Zod, React Hook Form |
 | Icons | Lucide React |
 
@@ -37,7 +37,7 @@ A modern enterprise-level HR and Employee Management Web Application built with 
 
 ### Prerequisites
 - Node.js 18+
-- MySQL 8.0+
+- MariaDB 10.x+ or MySQL 8.0+ (AWS Ubuntu server recommended)
 
 ### Installation
 
@@ -46,23 +46,46 @@ A modern enterprise-level HR and Employee Management Web Application built with 
 npm install
 
 # Set up environment variables
-cp .env.example .env.local
-# Edit .env.local with your MySQL credentials
+cp .env.example .env
+# Edit .env with your MariaDB/MySQL credentials
 
-# Set up the database
+# Run schema on your MariaDB server
+mysql -u root -p < src/database/schema.sql
+
+# OR use the seed script (also creates tables + seed data)
 npm run db:seed
 
 # Start development server
 npm run dev
 ```
 
+### MariaDB Setup (AWS Ubuntu)
+
+```bash
+# On your AWS Ubuntu server:
+sudo apt update
+sudo apt install mariadb-server -y
+sudo systemctl start mariadb
+sudo mysql_secure_installation
+
+# Allow remote connections (edit /etc/mysql/mariadb.conf.d/50-server.cnf)
+# Change bind-address to 0.0.0.0
+sudo systemctl restart mariadb
+
+# Create user for remote access
+sudo mysql -u root -p
+CREATE USER 'hrapp'@'%' IDENTIFIED BY 'your_secure_password';
+GRANT ALL PRIVILEGES ON hr_management.* TO 'hrapp'@'%';
+FLUSH PRIVILEGES;
+```
+
 ### Environment Variables
 
 ```env
-DB_HOST=localhost
+DB_HOST=your-aws-server-ip
 DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_password
+DB_USER=hrapp
+DB_PASSWORD=your_secure_password
 DB_NAME=hr_management
 JWT_SECRET=your-super-secret-key
 ```

@@ -1,22 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, insert, execute, queryOne } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 // GET all performance data (goals, feedback, skills)
 export async function GET() {
   try {
     const user = await requireAuth();
-    const db = getData();
 
-    let goals = db.performance_goals || [];
-    let feedback = db.performance_feedback || [];
-    let skills = db.performance_skills || [];
+    let goals, feedback, skills;
 
-    // Employees can only see their own data
     if (user.role === "employee" && user.emp_id) {
-      goals = goals.filter(g => g.employeeId === user.emp_id);
-      feedback = feedback.filter(f => f.employeeId === user.emp_id);
-      skills = skills.filter(s => s.employeeId === user.emp_id);
+      goals = await query("SELECT * FROM performance_goals WHERE employee_id = ?", [user.emp_id]);
+      feedback = await query("SELECT * FROM performance_feedback WHERE employee_id = ?", [user.emp_id]);
+      skills = await query("SELECT skill, rating, max_rating as `max`, employee_id as employeeId FROM performance_skills WHERE employee_id = ?", [user.emp_id]);
+    } else {
+      goals = await query("SELECT * FROM performance_goals");
+      feedback = await query("SELECT * FROM performance_feedback");
+      skills = await query("SELECT skill, rating, max_rating as `max`, employee_id as employeeId FROM performance_skills");
     }
 
     return NextResponse.json({
@@ -54,11 +54,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getData();
-    if (!db.performance_goals) db.performance_goals = [];
-    if (!db.performance_feedback) db.performance_feedback = [];
-    if (!db.performance_skills) db.performance_skills = [];
-
     if (type === "goal") {
       if (!data.title || !data.employeeId || !data.dueDate || !data.category) {
         return NextResponse.json(
@@ -66,21 +61,16 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      const newGoal = {
-        id: getNextId(db.performance_goals),
-        title: data.title,
-        description: data.description || "",
-        progress: data.progress || 0,
-        status: data.status || "not_started",
-        dueDate: data.dueDate,
-        category: data.category,
-        assignedBy: "HR Admin",
-        assignedAt: new Date().toISOString(),
-        employeeId: data.employeeId,
-      };
-      db.performance_goals.push(newGoal);
-      saveData(db);
-      return NextResponse.json({ success: true, message: "Goal assigned", data: newGoal }, { status: 201 });
+      const newId = await insert(
+        `INSERT INTO performance_goals (title, description, progress, status, due_date, category, assigned_by, employee_id) 
+         VALUES (?, ?, ?, ?, ?, ?, 'HR Admin', ?)`,
+        [data.title, data.description || "", data.progress || 0, data.status || "not_started", data.dueDate, data.category, data.employeeId]
+      );
+      return NextResponse.json({
+        success: true,
+        message: "Goal assigned",
+        data: { id: newId, ...data, assignedBy: "HR Admin", assignedAt: new Date().toISOString() },
+      }, { status: 201 });
     }
 
     if (type === "feedback") {
@@ -90,19 +80,17 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      const newFeedback = {
-        id: getNextId(db.performance_feedback),
-        from: "HR Admin",
-        role: "HR",
-        message: data.message,
-        rating: data.rating || 5,
-        date: new Date().toISOString().split("T")[0],
-        type: data.type || "general",
-        employeeId: data.employeeId,
-      };
-      db.performance_feedback.push(newFeedback);
-      saveData(db);
-      return NextResponse.json({ success: true, message: "Feedback submitted", data: newFeedback }, { status: 201 });
+      const today = new Date().toISOString().split("T")[0];
+      const newId = await insert(
+        `INSERT INTO performance_feedback (from_person, role, message, rating, date, type, employee_id) 
+         VALUES ('HR Admin', 'HR', ?, ?, ?, ?, ?)`,
+        [data.message, data.rating || 5, today, data.type || "general", data.employeeId]
+      );
+      return NextResponse.json({
+        success: true,
+        message: "Feedback submitted",
+        data: { id: newId, from: "HR Admin", role: "HR", message: data.message, rating: data.rating || 5, date: today, type: data.type || "general", employeeId: data.employeeId },
+      }, { status: 201 });
     }
 
     if (type === "skill") {
@@ -112,19 +100,18 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      // Remove existing rating for same skill+employee, then add new
-      db.performance_skills = db.performance_skills.filter(
-        (s) => !(s.employeeId === data.employeeId && s.skill === data.skill)
+      // Use INSERT ... ON DUPLICATE KEY UPDATE
+      await execute(
+        `INSERT INTO performance_skills (skill, rating, max_rating, employee_id) 
+         VALUES (?, ?, 5, ?) 
+         ON DUPLICATE KEY UPDATE rating = ?`,
+        [data.skill, data.rating || 3, data.employeeId, data.rating || 3]
       );
-      const newSkill = {
-        skill: data.skill,
-        rating: data.rating || 3,
-        max: 5,
-        employeeId: data.employeeId,
-      };
-      db.performance_skills.push(newSkill);
-      saveData(db);
-      return NextResponse.json({ success: true, message: "Skill rated", data: newSkill }, { status: 201 });
+      return NextResponse.json({
+        success: true,
+        message: "Skill rated",
+        data: { skill: data.skill, rating: data.rating || 3, max: 5, employeeId: data.employeeId },
+      }, { status: 201 });
     }
 
     return NextResponse.json({ success: false, message: "Invalid type. Use: goal, feedback, skill" }, { status: 400 });
@@ -152,26 +139,29 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, message: "type and data required" }, { status: 400 });
     }
 
-    const db = getData();
-    if (!db.performance_goals) db.performance_goals = [];
-
     if (type === "goal") {
-      const index = db.performance_goals.findIndex((g) => g.id === id);
-      if (index === -1) {
+      const existing = await queryOne("SELECT id FROM performance_goals WHERE id = ?", [id]);
+      if (!existing) {
         return NextResponse.json({ success: false, message: "Goal not found" }, { status: 404 });
       }
-      db.performance_goals[index] = {
-        ...db.performance_goals[index],
-        title: data.title ?? db.performance_goals[index].title,
-        description: data.description ?? db.performance_goals[index].description,
-        progress: data.progress ?? db.performance_goals[index].progress,
-        status: data.status ?? db.performance_goals[index].status,
-        dueDate: data.dueDate ?? db.performance_goals[index].dueDate,
-        category: data.category ?? db.performance_goals[index].category,
-        employeeId: data.employeeId ?? db.performance_goals[index].employeeId,
-      };
-      saveData(db);
-      return NextResponse.json({ success: true, message: "Goal updated", data: db.performance_goals[index] });
+
+      const setClauses: string[] = [];
+      const values: unknown[] = [];
+
+      if (data.title !== undefined) { setClauses.push("title = ?"); values.push(data.title); }
+      if (data.description !== undefined) { setClauses.push("description = ?"); values.push(data.description); }
+      if (data.progress !== undefined) { setClauses.push("progress = ?"); values.push(data.progress); }
+      if (data.status !== undefined) { setClauses.push("status = ?"); values.push(data.status); }
+      if (data.dueDate !== undefined) { setClauses.push("due_date = ?"); values.push(data.dueDate); }
+      if (data.category !== undefined) { setClauses.push("category = ?"); values.push(data.category); }
+      if (data.employeeId !== undefined) { setClauses.push("employee_id = ?"); values.push(data.employeeId); }
+
+      if (setClauses.length > 0) {
+        values.push(id);
+        await execute(`UPDATE performance_goals SET ${setClauses.join(", ")} WHERE id = ?`, values);
+      }
+
+      return NextResponse.json({ success: true, message: "Goal updated" });
     }
 
     return NextResponse.json({ success: false, message: "Only goal updates supported" }, { status: 400 });
@@ -200,27 +190,19 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, message: "type and id required" }, { status: 400 });
     }
 
-    const db = getData();
-
     if (type === "goal") {
-      if (!db.performance_goals) db.performance_goals = [];
-      const before = db.performance_goals.length;
-      db.performance_goals = db.performance_goals.filter((g) => g.id !== id);
-      if (db.performance_goals.length === before) {
+      const affected = await execute("DELETE FROM performance_goals WHERE id = ?", [id]);
+      if (affected === 0) {
         return NextResponse.json({ success: false, message: "Goal not found" }, { status: 404 });
       }
-      saveData(db);
       return NextResponse.json({ success: true, message: "Goal deleted" });
     }
 
     if (type === "feedback") {
-      if (!db.performance_feedback) db.performance_feedback = [];
-      const before = db.performance_feedback.length;
-      db.performance_feedback = db.performance_feedback.filter((f) => f.id !== id);
-      if (db.performance_feedback.length === before) {
+      const affected = await execute("DELETE FROM performance_feedback WHERE id = ?", [id]);
+      if (affected === 0) {
         return NextResponse.json({ success: false, message: "Feedback not found" }, { status: 404 });
       }
-      saveData(db);
       return NextResponse.json({ success: true, message: "Feedback deleted" });
     }
 

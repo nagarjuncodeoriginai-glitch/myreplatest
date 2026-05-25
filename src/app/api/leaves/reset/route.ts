@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, execute } from "@/database/connection";
 
 // POST - Monthly leave reset
 export async function POST() {
@@ -8,35 +8,23 @@ export async function POST() {
     const currentMonth = now.getMonth() + 1;
     const currentYear = now.getFullYear();
 
-    const db = getData();
-    const activeEmployees = db.employees.filter((e) => e.status === "active");
+    // Get all active employees
+    const activeEmployees = await query<{ id: number }[]>(
+      "SELECT id FROM employees WHERE status = 'active'"
+    );
 
     let resetCount = 0;
 
     for (const emp of activeEmployees) {
-      const existingIndex = db.leave_balance.findIndex(
-        (lb) => lb.employee_id === emp.id && lb.month === currentMonth && lb.year === currentYear
+      // Use INSERT ... ON DUPLICATE KEY UPDATE to handle both cases
+      await execute(
+        `INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) 
+         VALUES (?, ?, ?, 2, 0, 2) 
+         ON DUPLICATE KEY UPDATE total_cl = 2, used_cl = 0, remaining_cl = 2`,
+        [emp.id, currentMonth, currentYear]
       );
-
-      if (existingIndex !== -1) {
-        db.leave_balance[existingIndex].total_cl = 2;
-        db.leave_balance[existingIndex].used_cl = 0;
-        db.leave_balance[existingIndex].remaining_cl = 2;
-      } else {
-        db.leave_balance.push({
-          id: getNextId(db.leave_balance),
-          employee_id: emp.id,
-          month: currentMonth,
-          year: currentYear,
-          total_cl: 2,
-          used_cl: 0,
-          remaining_cl: 2,
-        });
-      }
       resetCount++;
     }
-
-    saveData(db);
 
     return NextResponse.json({
       success: true,

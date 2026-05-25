@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, queryOne, insert } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 // GET leave balance (CL only)
@@ -12,29 +12,33 @@ export async function GET(request: NextRequest) {
     const year = parseInt(searchParams.get("year") || String(new Date().getFullYear()));
     const employeeId = searchParams.get("employee_id");
 
-    const db = getData();
-
     if (user.role === "hr" && !employeeId) {
       // HR viewing all balances
-      const balances = db.leave_balance
-        .filter((lb) => lb.month === month && lb.year === year)
-        .map((lb) => {
-          const emp = db.employees.find((e) => e.id === lb.employee_id);
-          return { ...lb, full_name: emp?.full_name, emp_id: emp?.emp_id };
-        });
+      const balances = await query(
+        `SELECT lb.*, e.full_name, e.emp_id 
+         FROM leave_balance lb 
+         LEFT JOIN employees e ON lb.employee_id = e.id 
+         WHERE lb.month = ? AND lb.year = ?`,
+        [month, year]
+      );
       return NextResponse.json({ success: true, data: balances });
     }
 
     const targetId = user.role === "hr" && employeeId ? parseInt(employeeId) : user.id;
 
-    let balance = db.leave_balance.find(
-      (lb) => lb.employee_id === targetId && lb.month === month && lb.year === year
+    let balance = await queryOne(
+      "SELECT * FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
+      [targetId, month, year]
     );
 
     if (!balance) {
       // Create default balance
+      const newId = await insert(
+        "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, 0, 2)",
+        [targetId, month, year]
+      );
       balance = {
-        id: getNextId(db.leave_balance),
+        id: newId,
         employee_id: targetId,
         month,
         year,
@@ -42,8 +46,6 @@ export async function GET(request: NextRequest) {
         used_cl: 0,
         remaining_cl: 2,
       };
-      db.leave_balance.push(balance);
-      saveData(db);
     }
 
     return NextResponse.json({ success: true, data: balance });
