@@ -78,6 +78,12 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// Helper: convert empty string to null for DATE columns
+function toDateOrNull(value: string | undefined | null): string | null {
+  if (!value || value.trim() === "") return null;
+  return value;
+}
+
 // POST create new employee (HR only)
 export async function POST(request: NextRequest) {
   try {
@@ -125,7 +131,7 @@ export async function POST(request: NextRequest) {
         data.email,
         data.phone,
         data.gender,
-        data.date_of_birth || null,
+        toDateOrNull(data.date_of_birth),
         data.address || "",
         data.department,
         data.designation,
@@ -133,7 +139,7 @@ export async function POST(request: NextRequest) {
         data.doj,
         data.employment_type,
         data.probation_period || "",
-        data.confirmation_date || null,
+        toDateOrNull(data.confirmation_date),
         data.work_location || "",
         data.shift_timing || "",
         data.salary_package || "",
@@ -171,6 +177,6 @@ export async function POST(request: NextRequest) {
       );
     }
     console.error("Create employee error:", error);
-    return NextResponse.json({ success: false, message: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ success: false, message: "Database error: " + (error as Error).message }, { status: 500 });
   }
 }

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS employees (
   aadhaar_number VARCHAR(20) DEFAULT '',
   username VARCHAR(100) NOT NULL UNIQUE,
   password VARCHAR(255) NOT NULL,
-  profile_photo TEXT DEFAULT '',
+  profile_photo LONGTEXT DEFAULT '',
   status ENUM('active', 'inactive', 'on_probation') DEFAULT 'active',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
