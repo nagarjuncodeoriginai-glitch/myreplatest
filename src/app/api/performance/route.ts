@@ -9,14 +9,24 @@ export async function GET() {
 
     let goals, feedback, skills;
 
+    const goalsQuery = `SELECT id, title, description, progress, status, 
+      due_date as dueDate, category, assigned_by as assignedBy, 
+      assigned_at as assignedAt, employee_id as employeeId 
+      FROM performance_goals`;
+    const feedbackQuery = `SELECT id, from_person as \`from\`, role, message, rating, 
+      date, type, employee_id as employeeId 
+      FROM performance_feedback`;
+    const skillsQuery = `SELECT skill, rating, max_rating as \`max\`, employee_id as employeeId 
+      FROM performance_skills`;
+
     if (user.role === "employee" && user.emp_id) {
-      goals = await query("SELECT * FROM performance_goals WHERE employee_id = ?", [user.emp_id]);
-      feedback = await query("SELECT * FROM performance_feedback WHERE employee_id = ?", [user.emp_id]);
-      skills = await query("SELECT skill, rating, max_rating as `max`, employee_id as employeeId FROM performance_skills WHERE employee_id = ?", [user.emp_id]);
+      goals = await query(`${goalsQuery} WHERE employee_id = ? ORDER BY assigned_at DESC`, [user.emp_id]);
+      feedback = await query(`${feedbackQuery} WHERE employee_id = ? ORDER BY date DESC`, [user.emp_id]);
+      skills = await query(`${skillsQuery} WHERE employee_id = ?`, [user.emp_id]);
     } else {
-      goals = await query("SELECT * FROM performance_goals");
-      feedback = await query("SELECT * FROM performance_feedback");
-      skills = await query("SELECT skill, rating, max_rating as `max`, employee_id as employeeId FROM performance_skills");
+      goals = await query(`${goalsQuery} ORDER BY assigned_at DESC`);
+      feedback = await query(`${feedbackQuery} ORDER BY date DESC`);
+      skills = await query(skillsQuery);
     }
 
     return NextResponse.json({
