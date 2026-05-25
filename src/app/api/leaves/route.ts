@@ -108,23 +108,29 @@ export async function POST(request: NextRequest) {
     const month = start.getMonth() + 1;
     const year = start.getFullYear();
 
-    let balance = await queryOne<{ id: number; remaining_cl: number }>(
+    const balanceRow = await queryOne<{ id: number; remaining_cl: number }>(
       "SELECT id, remaining_cl FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
       [user.id, month, year]
     );
 
-    if (!balance) {
+    let balanceId: number;
+    let remainingCl: number;
+
+    if (!balanceRow) {
       // Create balance for this month
-      const balanceId = await insert(
+      balanceId = await insert(
         "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, 0, 2)",
         [user.id, month, year]
       );
-      balance = { id: balanceId, remaining_cl: 2 };
+      remainingCl = 2;
+    } else {
+      balanceId = balanceRow.id;
+      remainingCl = balanceRow.remaining_cl;
     }
 
-    if (balance.remaining_cl < diffDays) {
+    if (remainingCl < diffDays) {
       return NextResponse.json(
-        { success: false, message: `Insufficient leave balance. You have ${balance.remaining_cl} CL remaining this month.` },
+        { success: false, message: `Insufficient leave balance. You have ${remainingCl} CL remaining this month.` },
         { status: 400 }
       );
     }
@@ -139,9 +145,9 @@ export async function POST(request: NextRequest) {
     );
     const pendingDays = pendingResult[0].pending_days;
 
-    if (balance.remaining_cl - pendingDays < diffDays) {
+    if (remainingCl - pendingDays < diffDays) {
       return NextResponse.json(
-        { success: false, message: `Insufficient leave balance. You have ${balance.remaining_cl - pendingDays} CL available (${pendingDays} day(s) pending approval).` },
+        { success: false, message: `Insufficient leave balance. You have ${remainingCl - pendingDays} CL available (${pendingDays} day(s) pending approval).` },
         { status: 400 }
       );
     }

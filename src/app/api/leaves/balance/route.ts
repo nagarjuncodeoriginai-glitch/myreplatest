@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     const targetId = user.role === "hr" && employeeId ? parseInt(employeeId) : user.id;
 
-    let balance = await queryOne(
+    const balance = await queryOne(
       "SELECT * FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
       [targetId, month, year]
     );
@@ -37,15 +37,18 @@ export async function GET(request: NextRequest) {
         "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, 0, 2)",
         [targetId, month, year]
       );
-      balance = {
-        id: newId,
-        employee_id: targetId,
-        month,
-        year,
-        total_cl: 2,
-        used_cl: 0,
-        remaining_cl: 2,
-      };
+      return NextResponse.json({
+        success: true,
+        data: {
+          id: newId,
+          employee_id: targetId,
+          month,
+          year,
+          total_cl: 2,
+          used_cl: 0,
+          remaining_cl: 2,
+        },
+      });
     }
 
     return NextResponse.json({ success: true, data: balance });

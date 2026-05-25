@@ -11,25 +11,17 @@ export async function GET() {
     const currentYear = now.getFullYear();
 
     // Get or create leave balance
-    let balance = await queryOne<{
-      id: number;
-      employee_id: number;
-      month: number;
-      year: number;
-      total_cl: number;
-      used_cl: number;
-      remaining_cl: number;
-    }>(
+    let balanceData = await queryOne(
       "SELECT * FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
       [user.id, currentMonth, currentYear]
     );
 
-    if (!balance) {
+    if (!balanceData) {
       const newId = await insert(
         "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, 0, 2)",
         [user.id, currentMonth, currentYear]
       );
-      balance = {
+      balanceData = {
         id: newId,
         employee_id: user.id,
         month: currentMonth,
@@ -37,7 +29,7 @@ export async function GET() {
         total_cl: 2,
         used_cl: 0,
         remaining_cl: 2,
-      };
+      } as typeof balanceData;
     }
 
     // Pending leaves count
@@ -63,7 +55,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       data: {
-        leaveBalance: balance,
+        leaveBalance: balanceData,
         pendingLeaves,
         approvedLeaves,
         recentLeaves,
