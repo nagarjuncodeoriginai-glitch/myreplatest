@@ -1,24 +1,36 @@
 import { NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, queryOne, insert } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   try {
     const user = await requireAuth("employee");
-    const db = getData();
 
     const now = new Date();
     const currentMonth = now.getMonth() + 1;
     const currentYear = now.getFullYear();
 
     // Get or create leave balance
-    let balance = db.leave_balance.find(
-      (lb) => lb.employee_id === user.id && lb.month === currentMonth && lb.year === currentYear
+    let balance = await queryOne<{
+      id: number;
+      employee_id: number;
+      month: number;
+      year: number;
+      total_cl: number;
+      used_cl: number;
+      remaining_cl: number;
+    }>(
+      "SELECT * FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
+      [user.id, currentMonth, currentYear]
     );
 
     if (!balance) {
+      const newId = await insert(
+        "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, 0, 2)",
+        [user.id, currentMonth, currentYear]
+      );
       balance = {
-        id: getNextId(db.leave_balance),
+        id: newId,
         employee_id: user.id,
         month: currentMonth,
         year: currentYear,
@@ -26,21 +38,27 @@ export async function GET() {
         used_cl: 0,
         remaining_cl: 2,
       };
-      db.leave_balance.push(balance);
-      saveData(db);
     }
 
-    // Counts
-    const myLeaves = db.leaves.filter((l) => l.employee_id === user.id);
-    const pendingLeaves = myLeaves.filter((l) => l.status === "pending").length;
-    const approvedLeaves = myLeaves.filter(
-      (l) => l.status === "approved" && new Date(l.start_date).getFullYear() === currentYear
-    ).length;
+    // Pending leaves count
+    const pendingResult = await query<{ count: number }[]>(
+      "SELECT COUNT(*) as count FROM leaves WHERE employee_id = ? AND status = 'pending'",
+      [user.id]
+    );
+    const pendingLeaves = pendingResult[0].count;
+
+    // Approved leaves this year
+    const approvedResult = await query<{ count: number }[]>(
+      "SELECT COUNT(*) as count FROM leaves WHERE employee_id = ? AND status = 'approved' AND YEAR(start_date) = ?",
+      [user.id, currentYear]
+    );
+    const approvedLeaves = approvedResult[0].count;
 
     // Recent leaves
-    const recentLeaves = myLeaves
-      .sort((a, b) => new Date(b.applied_at).getTime() - new Date(a.applied_at).getTime())
-      .slice(0, 5);
+    const recentLeaves = await query(
+      "SELECT * FROM leaves WHERE employee_id = ? ORDER BY applied_at DESC LIMIT 5",
+      [user.id]
+    );
 
     return NextResponse.json({
       success: true,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, queryOne, insert } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 import { leaveApplicationSchema } from "@/lib/validations";
 
@@ -11,39 +11,45 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status") || "";
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
+    const offset = (page - 1) * limit;
 
-    const db = getData();
-    let filtered = [...db.leaves];
+    let whereClauses: string[] = [];
+    let params: unknown[] = [];
 
     // Employees can only see their own leaves
     if (user.role === "employee") {
-      filtered = filtered.filter((l) => l.employee_id === user.id);
+      whereClauses.push("l.employee_id = ?");
+      params.push(user.id);
     }
 
     if (status) {
-      filtered = filtered.filter((l) => l.status === status);
+      whereClauses.push("l.status = ?");
+      params.push(status);
     }
 
-    // Sort by applied_at descending
-    filtered.sort((a, b) => new Date(b.applied_at).getTime() - new Date(a.applied_at).getTime());
+    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-    const total = filtered.length;
-    const offset = (page - 1) * limit;
-    const paged = filtered.slice(offset, offset + limit);
+    // Get total count
+    const countResult = await query<{ total: number }[]>(
+      `SELECT COUNT(*) as total FROM leaves l ${whereStr}`,
+      params
+    );
+    const total = countResult[0].total;
 
-    // Add employee name and emp_id
-    const leavesWithNames = paged.map((leave) => {
-      const emp = db.employees.find((e) => e.id === leave.employee_id);
-      return {
-        ...leave,
-        employee_name: emp?.full_name || "Unknown",
-        emp_id: emp?.emp_id || "—",
-      };
-    });
+    // Get paginated leaves with employee names
+    const leaves = await query(
+      `SELECT l.*, e.full_name as employee_name, e.emp_id 
+       FROM leaves l 
+       LEFT JOIN employees e ON l.employee_id = e.id 
+       ${whereStr} 
+       ORDER BY l.applied_at DESC 
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
 
     return NextResponse.json({
       success: true,
-      data: leavesWithNames,
+      data: leaves,
       total,
       page,
       limit,
@@ -101,24 +107,19 @@ export async function POST(request: NextRequest) {
     // Check leave balance for the month
     const month = start.getMonth() + 1;
     const year = start.getFullYear();
-    const db = getData();
 
-    let balance = db.leave_balance.find(
-      (lb) => lb.employee_id === user.id && lb.month === month && lb.year === year
+    let balance = await queryOne<{ id: number; remaining_cl: number }>(
+      "SELECT id, remaining_cl FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
+      [user.id, month, year]
     );
 
     if (!balance) {
       // Create balance for this month
-      balance = {
-        id: getNextId(db.leave_balance),
-        employee_id: user.id,
-        month,
-        year,
-        total_cl: 2,
-        used_cl: 0,
-        remaining_cl: 2,
-      };
-      db.leave_balance.push(balance);
+      const balanceId = await insert(
+        "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, 0, 2)",
+        [user.id, month, year]
+      );
+      balance = { id: balanceId, remaining_cl: 2 };
     }
 
     if (balance.remaining_cl < diffDays) {
@@ -128,20 +129,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Also check pending leaves that haven't been approved yet
-    const pendingDays = db.leaves
-      .filter(
-        (l) =>
-          l.employee_id === user.id &&
-          l.status === "pending" &&
-          new Date(l.start_date).getMonth() + 1 === month &&
-          new Date(l.start_date).getFullYear() === year
-      )
-      .reduce((sum, l) => {
-        const s = new Date(l.start_date);
-        const e = new Date(l.end_date);
-        return sum + Math.ceil((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      }, 0);
+    // Check pending leaves that haven't been approved yet
+    const pendingResult = await query<{ pending_days: number }[]>(
+      `SELECT COALESCE(SUM(DATEDIFF(end_date, start_date) + 1), 0) as pending_days 
+       FROM leaves 
+       WHERE employee_id = ? AND status = 'pending' 
+       AND MONTH(start_date) = ? AND YEAR(start_date) = ?`,
+      [user.id, month, year]
+    );
+    const pendingDays = pendingResult[0].pending_days;
 
     if (balance.remaining_cl - pendingDays < diffDays) {
       return NextResponse.json(
@@ -151,41 +147,26 @@ export async function POST(request: NextRequest) {
     }
 
     // Create leave application
-    const newLeave = {
-      id: getNextId(db.leaves),
-      employee_id: user.id,
-      leave_type: "CL" as const,
-      start_date,
-      end_date,
-      reason,
-      status: "pending" as const,
-      applied_at: new Date().toISOString(),
-      reviewed_at: null,
-      reviewed_by: null,
-      cancelled_at: null,
-    };
-
-    db.leaves.push(newLeave);
+    const newLeaveId = await insert(
+      `INSERT INTO leaves (employee_id, leave_type, start_date, end_date, reason, status) 
+       VALUES (?, 'CL', ?, ?, ?, 'pending')`,
+      [user.id, start_date, end_date, reason]
+    );
 
     // Create notification for HR
-    if (!db.notifications) db.notifications = [];
-    const emp = db.employees.find((e) => e.id === user.id);
-    db.notifications.push({
-      id: getNextId(db.notifications),
-      user_id: 1, // HR admin
-      user_role: "hr",
-      type: "leave_applied",
-      title: "New Leave Request",
-      message: `${emp?.full_name || "Employee"} applied for Casual Leave (${start_date} to ${end_date})`,
-      is_read: false,
-      created_at: new Date().toISOString(),
-      related_id: newLeave.id,
-    });
+    const emp = await queryOne<{ full_name: string }>(
+      "SELECT full_name FROM employees WHERE id = ?",
+      [user.id]
+    );
 
-    saveData(db);
+    await insert(
+      `INSERT INTO notifications (user_id, user_role, type, title, message, is_read, related_id) 
+       VALUES (1, 'hr', 'leave_applied', 'New Leave Request', ?, 0, ?)`,
+      [`${emp?.full_name || "Employee"} applied for Casual Leave (${start_date} to ${end_date})`, newLeaveId]
+    );
 
     return NextResponse.json(
-      { success: true, message: "Leave application submitted successfully", id: newLeave.id },
+      { success: true, message: "Leave application submitted successfully", id: newLeaveId },
       { status: 201 }
     );
   } catch (error: unknown) {

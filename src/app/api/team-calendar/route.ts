@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData } from "@/database/connection";
+import { query } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 // GET team calendar - shows who is on leave for a given month
@@ -11,46 +11,38 @@ export async function GET(request: NextRequest) {
     const year = parseInt(searchParams.get("year") || String(new Date().getFullYear()));
     const department = searchParams.get("department") || "";
 
-    const db = getData();
+    // Get the first and last day of the month
+    const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
-    // Get approved and pending leaves that overlap with the requested month
-    const monthStart = new Date(year, month - 1, 1);
-    const monthEnd = new Date(year, month, 0); // Last day of month
+    let whereExtra = "";
+    let params: unknown[] = [monthEnd, monthStart];
 
-    const relevantLeaves = db.leaves.filter((l) => {
-      if (l.status !== "approved" && l.status !== "pending") return false;
-      const leaveStart = new Date(l.start_date);
-      const leaveEnd = new Date(l.end_date);
-      // Check if leave overlaps with the month
-      return leaveStart <= monthEnd && leaveEnd >= monthStart;
-    });
+    if (department) {
+      whereExtra = " AND e.department = ?";
+      params.push(department);
+    }
 
-    // Build calendar entries with employee info
-    const entries = relevantLeaves.map((leave) => {
-      const emp = db.employees.find((e) => e.id === leave.employee_id);
-      return {
-        employee_id: leave.employee_id,
-        emp_id: emp?.emp_id || "",
-        employee_name: emp?.full_name || "Unknown",
-        department: emp?.department || "",
-        leave_type: leave.leave_type,
-        start_date: leave.start_date,
-        end_date: leave.end_date,
-        status: leave.status as "approved" | "pending",
-      };
-    });
-
-    // Filter by department if specified
-    const filtered = department
-      ? entries.filter((e) => e.department === department)
-      : entries;
+    const entries = await query(
+      `SELECT l.employee_id, e.emp_id, e.full_name as employee_name, e.department, 
+              l.leave_type, l.start_date, l.end_date, l.status
+       FROM leaves l
+       LEFT JOIN employees e ON l.employee_id = e.id
+       WHERE l.status IN ('approved', 'pending')
+       AND l.start_date <= ? AND l.end_date >= ?${whereExtra}`,
+      params
+    );
 
     // Get unique departments for filter
-    const departments = [...new Set(db.employees.map((e) => e.department))].filter(Boolean).sort();
+    const depts = await query<{ department: string }[]>(
+      "SELECT DISTINCT department FROM employees WHERE department IS NOT NULL AND department != '' ORDER BY department"
+    );
+    const departments = depts.map((d) => d.department);
 
     return NextResponse.json({
       success: true,
-      data: filtered,
+      data: entries,
       departments,
       month,
       year,

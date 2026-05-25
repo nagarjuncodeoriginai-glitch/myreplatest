@@ -1,24 +1,15 @@
 import { NextResponse } from "next/server";
-import { getData } from "@/database/connection";
+import { query } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   try {
     await requireAuth("hr");
 
-    const db = getData();
-    const deptMap: Record<string, number> = {};
-
-    for (const emp of db.employees) {
-      deptMap[emp.department] = (deptMap[emp.department] || 0) + 1;
-    }
-
-    const departments = Object.entries(deptMap).map(([department, count]) => ({
-      department,
-      count,
-    }));
-
-    departments.sort((a, b) => a.department.localeCompare(b.department));
+    const departments = await query<{ department: string; count: number }[]>(
+      `SELECT department, COUNT(*) as count FROM employees 
+       GROUP BY department ORDER BY department ASC`
+    );
 
     return NextResponse.json({ success: true, data: departments });
   } catch (error: unknown) {

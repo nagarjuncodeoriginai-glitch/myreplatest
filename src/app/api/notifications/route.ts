@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData, saveData } from "@/database/connection";
+import { query, execute } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 // GET notifications for the current user
@@ -10,31 +10,36 @@ export async function GET(request: NextRequest) {
     const unreadOnly = searchParams.get("unread") === "true";
     const limit = parseInt(searchParams.get("limit") || "20");
 
-    const db = getData();
-    if (!db.notifications) db.notifications = [];
-
-    let notifications = db.notifications.filter(
-      (n) => n.user_id === user.id && n.user_role === user.role
-    );
+    let whereClause = "WHERE user_id = ? AND user_role = ?";
+    let params: unknown[] = [user.id, user.role];
 
     if (unreadOnly) {
-      notifications = notifications.filter((n) => !n.is_read);
+      whereClause += " AND is_read = 0";
     }
 
-    // Sort by created_at descending
-    notifications.sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    const notifications = await query(
+      `SELECT * FROM notifications ${whereClause} ORDER BY created_at DESC LIMIT ?`,
+      [...params, limit]
     );
 
-    const unreadCount = db.notifications.filter(
-      (n) => n.user_id === user.id && n.user_role === user.role && !n.is_read
-    ).length;
+    // Get unread count
+    const unreadResult = await query<{ count: number }[]>(
+      "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND user_role = ? AND is_read = 0",
+      [user.id, user.role]
+    );
+    const unreadCount = unreadResult[0].count;
+
+    // Get total count
+    const totalResult = await query<{ count: number }[]>(
+      "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND user_role = ?",
+      [user.id, user.role]
+    );
 
     return NextResponse.json({
       success: true,
-      data: notifications.slice(0, limit),
+      data: notifications,
       unreadCount,
-      total: notifications.length,
+      total: totalResult[0].count,
     });
   } catch (error: unknown) {
     const err = error as Error;
@@ -53,35 +58,23 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
     const { notification_ids, mark_all } = body;
 
-    const db = getData();
-    if (!db.notifications) db.notifications = [];
-
     if (mark_all) {
-      db.notifications = db.notifications.map((n) => {
-        if (n.user_id === user.id && n.user_role === user.role) {
-          return { ...n, is_read: true };
-        }
-        return n;
-      });
-    } else if (notification_ids && Array.isArray(notification_ids)) {
-      db.notifications = db.notifications.map((n) => {
-        if (
-          notification_ids.includes(n.id) &&
-          n.user_id === user.id &&
-          n.user_role === user.role
-        ) {
-          return { ...n, is_read: true };
-        }
-        return n;
-      });
+      await execute(
+        "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND user_role = ?",
+        [user.id, user.role]
+      );
+    } else if (notification_ids && Array.isArray(notification_ids) && notification_ids.length > 0) {
+      const placeholders = notification_ids.map(() => "?").join(",");
+      await execute(
+        `UPDATE notifications SET is_read = 1 WHERE id IN (${placeholders}) AND user_id = ? AND user_role = ?`,
+        [...notification_ids, user.id, user.role]
+      );
     } else {
       return NextResponse.json(
         { success: false, message: "Provide notification_ids array or mark_all: true" },
         { status: 400 }
       );
     }
-
-    saveData(db);
 
     return NextResponse.json({
       success: true,

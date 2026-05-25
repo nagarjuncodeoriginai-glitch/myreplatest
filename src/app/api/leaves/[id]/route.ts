@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getData, saveData, getNextId } from "@/database/connection";
+import { query, queryOne, insert, execute } from "@/database/connection";
 import { requireAuth } from "@/lib/auth";
 
 // PUT - Approve/Reject leave (HR only) OR Cancel leave (Employee)
@@ -13,15 +13,20 @@ export async function PUT(
     const body = await request.json();
     const { action } = body;
 
-    const db = getData();
-    if (!db.notifications) db.notifications = [];
-    const leaveIndex = db.leaves.findIndex((l) => l.id === parseInt(id));
+    const leave = await queryOne<{
+      id: number;
+      employee_id: number;
+      status: string;
+      start_date: string;
+      end_date: string;
+    }>(
+      "SELECT id, employee_id, status, start_date, end_date FROM leaves WHERE id = ?",
+      [parseInt(id)]
+    );
 
-    if (leaveIndex === -1) {
+    if (!leave) {
       return NextResponse.json({ success: false, message: "Leave not found" }, { status: 404 });
     }
-
-    const leave = db.leaves[leaveIndex];
 
     // Employee cancellation
     if (action === "cancelled") {
@@ -39,24 +44,22 @@ export async function PUT(
         );
       }
 
-      db.leaves[leaveIndex].status = "cancelled";
-      db.leaves[leaveIndex].cancelled_at = new Date().toISOString();
+      await execute(
+        "UPDATE leaves SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?",
+        [leave.id]
+      );
 
       // Notify HR about cancellation
-      const emp = db.employees.find((e) => e.id === user.id);
-      db.notifications.push({
-        id: getNextId(db.notifications),
-        user_id: 1,
-        user_role: "hr",
-        type: "leave_cancelled",
-        title: "Leave Cancelled",
-        message: `${emp?.full_name || "Employee"} cancelled their CL request (${leave.start_date} to ${leave.end_date})`,
-        is_read: false,
-        created_at: new Date().toISOString(),
-        related_id: leave.id,
-      });
+      const emp = await queryOne<{ full_name: string }>(
+        "SELECT full_name FROM employees WHERE id = ?",
+        [user.id]
+      );
 
-      saveData(db);
+      await insert(
+        `INSERT INTO notifications (user_id, user_role, type, title, message, is_read, related_id) 
+         VALUES (1, 'hr', 'leave_cancelled', 'Leave Cancelled', ?, 0, ?)`,
+        [`${emp?.full_name || "Employee"} cancelled their CL request (${leave.start_date} to ${leave.end_date})`, leave.id]
+      );
 
       return NextResponse.json({
         success: true,
@@ -87,9 +90,10 @@ export async function PUT(
     }
 
     // Update leave status
-    db.leaves[leaveIndex].status = action;
-    db.leaves[leaveIndex].reviewed_at = new Date().toISOString();
-    db.leaves[leaveIndex].reviewed_by = "HR Admin";
+    await execute(
+      "UPDATE leaves SET status = ?, reviewed_at = NOW(), reviewed_by = 'HR Admin' WHERE id = ?",
+      [action, leave.id]
+    );
 
     // If approved, update leave balance
     if (action === "approved") {
@@ -99,40 +103,39 @@ export async function PUT(
       const month = start.getMonth() + 1;
       const year = start.getFullYear();
 
-      const balanceIndex = db.leave_balance.findIndex(
-        (lb) => lb.employee_id === leave.employee_id && lb.month === month && lb.year === year
+      const existingBalance = await queryOne<{ id: number }>(
+        "SELECT id FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
+        [leave.employee_id, month, year]
       );
 
-      if (balanceIndex !== -1) {
-        db.leave_balance[balanceIndex].used_cl += diffDays;
-        db.leave_balance[balanceIndex].remaining_cl -= diffDays;
+      if (existingBalance) {
+        await execute(
+          "UPDATE leave_balance SET used_cl = used_cl + ?, remaining_cl = remaining_cl - ? WHERE id = ?",
+          [diffDays, diffDays, existingBalance.id]
+        );
       } else {
-        db.leave_balance.push({
-          id: getNextId(db.leave_balance),
-          employee_id: leave.employee_id,
-          month,
-          year,
-          total_cl: 2,
-          used_cl: diffDays,
-          remaining_cl: 2 - diffDays,
-        });
+        await insert(
+          "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, ?, ?)",
+          [leave.employee_id, month, year, diffDays, 2 - diffDays]
+        );
       }
     }
 
     // Notify the employee
-    db.notifications.push({
-      id: getNextId(db.notifications),
-      user_id: leave.employee_id,
-      user_role: "employee",
-      type: action === "approved" ? "leave_approved" : "leave_rejected",
-      title: action === "approved" ? "Leave Approved" : "Leave Rejected",
-      message: `Your Casual Leave request (${leave.start_date} to ${leave.end_date}) has been ${action}.`,
-      is_read: false,
-      created_at: new Date().toISOString(),
-      related_id: leave.id,
-    });
+    const notifType = action === "approved" ? "leave_approved" : "leave_rejected";
+    const notifTitle = action === "approved" ? "Leave Approved" : "Leave Rejected";
 
-    saveData(db);
+    await insert(
+      `INSERT INTO notifications (user_id, user_role, type, title, message, is_read, related_id) 
+       VALUES (?, 'employee', ?, ?, ?, 0, ?)`,
+      [
+        leave.employee_id,
+        notifType,
+        notifTitle,
+        `Your Casual Leave request (${leave.start_date} to ${leave.end_date}) has been ${action}.`,
+        leave.id,
+      ]
+    );
 
     return NextResponse.json({
       success: true,
