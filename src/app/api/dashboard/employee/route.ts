@@ -11,7 +11,7 @@ export async function GET() {
     const currentYear = now.getFullYear();
 
     // Get or create leave balance
-    let balanceData = await queryOne(
+    const balanceData = await queryOne(
       "SELECT * FROM leave_balance WHERE employee_id = ? AND month = ? AND year = ?",
       [user.id, currentMonth, currentYear]
     );
@@ -21,15 +21,15 @@ export async function GET() {
         "INSERT INTO leave_balance (employee_id, month, year, total_cl, used_cl, remaining_cl) VALUES (?, ?, ?, 2, 0, 2)",
         [user.id, currentMonth, currentYear]
       );
-      balanceData = {
-        id: newId,
-        employee_id: user.id,
-        month: currentMonth,
-        year: currentYear,
-        total_cl: 2,
-        used_cl: 0,
-        remaining_cl: 2,
-      } as typeof balanceData;
+      return NextResponse.json({
+        success: true,
+        data: {
+          leaveBalance: { id: newId, employee_id: user.id, month: currentMonth, year: currentYear, total_cl: 2, used_cl: 0, remaining_cl: 2 },
+          pendingLeaves: 0,
+          approvedLeaves: 0,
+          recentLeaves: [],
+        },
+      });
     }
 
     // Pending leaves count
