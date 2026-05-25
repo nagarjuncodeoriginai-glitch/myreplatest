@@ -27,12 +27,15 @@ export function getPool(): mysql.Pool {
   return pool;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type QueryParams = any[];
+
 /**
  * Execute a query and return results
  */
 export async function query<T = RowDataPacket[]>(
   sql: string,
-  params?: (string | number | boolean | null | undefined)[]
+  params?: QueryParams
 ): Promise<T> {
   const db = getPool();
   const [results] = await db.execute<RowDataPacket[]>(sql, params);
@@ -44,7 +47,7 @@ export async function query<T = RowDataPacket[]>(
  */
 export async function insert(
   sql: string,
-  params?: (string | number | boolean | null | undefined)[]
+  params?: QueryParams
 ): Promise<number> {
   const db = getPool();
   const [result] = await db.execute<ResultSetHeader>(sql, params);
@@ -56,7 +59,7 @@ export async function insert(
  */
 export async function execute(
   sql: string,
-  params?: (string | number | boolean | null | undefined)[]
+  params?: QueryParams
 ): Promise<number> {
   const db = getPool();
   const [result] = await db.execute<ResultSetHeader>(sql, params);
@@ -68,7 +71,7 @@ export async function execute(
  */
 export async function queryOne<T = RowDataPacket>(
   sql: string,
-  params?: (string | number | boolean | null | undefined)[]
+  params?: QueryParams
 ): Promise<T | null> {
   const db = getPool();
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
