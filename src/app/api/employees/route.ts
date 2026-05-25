@@ -119,9 +119,9 @@ export async function POST(request: NextRequest) {
 
     const hashedPassword = await hashPassword(data.password);
 
-    // Truncate profile_photo if too large (max 1MB base64)
+    // Truncate profile_photo if too large (max 10MB base64)
     let profilePhoto = (body.profile_photo as string) || "";
-    if (profilePhoto.length > 1000000) {
+    if (profilePhoto.length > 10000000) {
       profilePhoto = ""; // Skip if too large
     }
 
