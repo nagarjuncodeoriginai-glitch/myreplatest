@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     const priority = searchParams.get("priority") || "";
 
     let whereClauses: string[] = ["is_active = 1"];
-    let params: unknown[] = [];
+    let params: (string | number | boolean | null | undefined)[] = [];
 
     if (category) {
       whereClauses.push("category = ?");

@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     const employeeId = searchParams.get("employee_id") || "";
 
     let whereClauses: string[] = [];
-    let params: unknown[] = [];
+    let params: (string | number | boolean | null | undefined)[] = [];
 
     // Employees can only see their own
     if (user.role === "employee") {

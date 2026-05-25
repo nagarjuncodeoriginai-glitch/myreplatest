@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit;
 
     let whereClauses: string[] = [];
-    let params: unknown[] = [];
+    let params: (string | number | boolean | null | undefined)[] = [];
 
     if (search) {
       whereClauses.push("(full_name LIKE ? OR emp_id LIKE ? OR email LIKE ? OR department LIKE ?)");

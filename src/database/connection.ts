@@ -4,7 +4,7 @@
  * Configure via environment variables in .env
  */
 
-import mysql from "mysql2/promise";
+import mysql, { RowDataPacket, ResultSetHeader } from "mysql2/promise";
 
 // Connection pool (singleton)
 let pool: mysql.Pool | null = null;
@@ -30,13 +30,13 @@ export function getPool(): mysql.Pool {
 /**
  * Execute a query and return results
  */
-export async function query<T = unknown>(
+export async function query<T = RowDataPacket[]>(
   sql: string,
-  params?: unknown[]
+  params?: (string | number | boolean | null | undefined)[]
 ): Promise<T> {
   const db = getPool();
-  const [results] = await db.execute(sql, params);
-  return results as T;
+  const [results] = await db.execute<RowDataPacket[]>(sql, params);
+  return results as unknown as T;
 }
 
 /**
@@ -44,10 +44,10 @@ export async function query<T = unknown>(
  */
 export async function insert(
   sql: string,
-  params?: unknown[]
+  params?: (string | number | boolean | null | undefined)[]
 ): Promise<number> {
   const db = getPool();
-  const [result] = await db.execute(sql, params) as [mysql.ResultSetHeader, unknown];
+  const [result] = await db.execute<ResultSetHeader>(sql, params);
   return result.insertId;
 }
 
@@ -56,22 +56,21 @@ export async function insert(
  */
 export async function execute(
   sql: string,
-  params?: unknown[]
+  params?: (string | number | boolean | null | undefined)[]
 ): Promise<number> {
   const db = getPool();
-  const [result] = await db.execute(sql, params) as [mysql.ResultSetHeader, unknown];
+  const [result] = await db.execute<ResultSetHeader>(sql, params);
   return result.affectedRows;
 }
 
 /**
  * Get a single row or null
  */
-export async function queryOne<T = unknown>(
+export async function queryOne<T = RowDataPacket>(
   sql: string,
-  params?: unknown[]
+  params?: (string | number | boolean | null | undefined)[]
 ): Promise<T | null> {
   const db = getPool();
-  const [rows] = await db.execute(sql, params);
-  const results = rows as T[];
-  return results.length > 0 ? results[0] : null;
+  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+  return rows.length > 0 ? (rows[0] as unknown as T) : null;
 }

@@ -146,7 +146,7 @@ export async function PUT(request: NextRequest) {
       }
 
       const setClauses: string[] = [];
-      const values: unknown[] = [];
+      const values: (string | number | boolean | null | undefined)[] = [];
 
       if (data.title !== undefined) { setClauses.push("title = ?"); values.push(data.title); }
       if (data.description !== undefined) { setClauses.push("description = ?"); values.push(data.description); }

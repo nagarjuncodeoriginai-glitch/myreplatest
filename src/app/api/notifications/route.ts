@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
 
     let whereClause = "WHERE user_id = ? AND user_role = ?";
-    let params: unknown[] = [user.id, user.role];
+    let params: (string | number | boolean | null | undefined)[] = [user.id, user.role];
 
     if (unreadOnly) {
       whereClause += " AND is_read = 0";

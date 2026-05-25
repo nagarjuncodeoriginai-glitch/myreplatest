@@ -73,7 +73,7 @@ export async function PUT(
     ];
 
     const setClauses: string[] = [];
-    const values: unknown[] = [];
+    const values: (string | number | boolean | null | undefined)[] = [];
 
     for (const field of allowedFields) {
       if (body[field] !== undefined) {

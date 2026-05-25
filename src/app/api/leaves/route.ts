@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit;
 
     let whereClauses: string[] = [];
-    let params: unknown[] = [];
+    let params: (string | number | boolean | null | undefined)[] = [];
 
     // Employees can only see their own leaves
     if (user.role === "employee") {

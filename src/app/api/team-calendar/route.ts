@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
     let whereExtra = "";
-    let params: unknown[] = [monthEnd, monthStart];
+    let params: (string | number | boolean | null | undefined)[] = [monthEnd, monthStart];
 
     if (department) {
       whereExtra = " AND e.department = ?";
